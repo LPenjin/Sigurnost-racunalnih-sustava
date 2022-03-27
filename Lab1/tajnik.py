@@ -5,6 +5,7 @@ from Crypto.Hash import HMAC
 from Crypto.Cipher import Salsa20
 from Crypto.Protocol.KDF import scrypt
 from Crypto.Random import get_random_bytes
+from Crypto.Util.Padding import pad, unpad
 
 
 def decrypt_encrypted(encrypted_dict, key):
@@ -13,10 +14,10 @@ def decrypt_encrypted(encrypted_dict, key):
         if pswd == b'salt' or pswd == b'MAC':
             continue
         cipher = Salsa20.new(key=key, nonce=pswd[:8])
-        decrypted_key = cipher.decrypt(pswd[8:])
+        decrypted_key = unpad(cipher.decrypt(pswd[8:]), 256)
         encrypted_value = encrypted_dict[pswd]
         cipher = Salsa20.new(key=key, nonce=encrypted_value[:8])
-        decrypted_value = cipher.decrypt(encrypted_value[8:])
+        decrypted_value = unpad(cipher.decrypt(encrypted_value[8:]), 256)
         decrypted_dict[decrypted_key] = decrypted_value
     return decrypted_dict
 
@@ -85,36 +86,36 @@ def put_passwd(put_list):
     try:
         h = get_HMAC(encrypted_dict, key)
         h.hexverify(encrypted_dict[b'MAC'])
-        decrypted_dict = decrypt_encrypted(encrypted_dict, key)
-        if dict_key in decrypted_dict:
-            print(f"Password for {dict_key.decode('utf-8')} already exits and it will be replaced")
-        decrypted_dict[dict_key] = dict_value
-        if bytes('sifra', 'utf-8') in decrypted_dict:
-            del encrypted_dict
-            encrypted_dict = {}
-            for pswd in decrypted_dict:
-                cipher = Salsa20.new(key)
-                new_encrypted_key = cipher.nonce + cipher.encrypt(pswd)
-                cipher = Salsa20.new(key)
-                new_encrypted_value = cipher.nonce + cipher.encrypt(decrypted_dict[pswd])
-                encrypted_dict[new_encrypted_key] = new_encrypted_value
-            encrypted_dict[b'salt'] = salt
-            h = get_HMAC(encrypted_dict, key)
-            encrypted_dict[b'MAC'] = h.hexdigest()
-        with open('PasswordManager', 'wb') as pm:
-            pickle.dump(encrypted_dict, pm)
-        print(f"Stored password for {dict_key.decode('utf-8')}")
     except ValueError:
         print("Wrong password or integrity compromised")
+    decrypted_dict = decrypt_encrypted(encrypted_dict, key)
+    if dict_key in decrypted_dict:
+        print(f"Password for {dict_key.decode('utf-8')} already exits and it will be replaced")
+    decrypted_dict[dict_key] = dict_value
+    if bytes('sifra', 'utf-8') in decrypted_dict:
+        del encrypted_dict
+        encrypted_dict = {}
+        for pswd in decrypted_dict:
+            cipher = Salsa20.new(key)
+            new_encrypted_key = cipher.nonce + cipher.encrypt(pad(pswd, 256))
+            cipher = Salsa20.new(key)
+            new_encrypted_value = cipher.nonce + cipher.encrypt(pad(decrypted_dict[pswd], 256))
+            encrypted_dict[new_encrypted_key] = new_encrypted_value
+        encrypted_dict[b'salt'] = salt
+        h = get_HMAC(encrypted_dict, key)
+        encrypted_dict[b'MAC'] = h.hexdigest()
+    with open('PasswordManager', 'wb') as pm:
+        pickle.dump(encrypted_dict, pm)
+    print(f"Stored password for {dict_key.decode('utf-8')}")
 
 
 def init_file(masterPassword):
     salt = get_random_bytes(16)
     key = scrypt(masterPassword, salt, 32, N=2 ** 14, r=8, p=1)
     cipher = Salsa20.new(key)
-    key_key = cipher.nonce + cipher.encrypt(bytes('sifra', 'utf-8'))
+    key_key = cipher.nonce + cipher.encrypt(pad(bytes('sifra', 'utf-8'), 256))
     cipher = Salsa20.new(key)
-    key_value = cipher.nonce + cipher.encrypt(key)
+    key_value = cipher.nonce + cipher.encrypt(pad(key, 256))
     starting_dict = {key_key: key_value}
     starting_dict[b'salt'] = salt
     h = get_HMAC(starting_dict, key)
@@ -146,7 +147,7 @@ def main():
                   f"that you want to add")
     elif args.get:
         if len(args.get) == 2:
-            put_passwd(args.get)
+            get_passwd(args.get)
         else:
             print(f"Incorrect number of arguments. Please enter masterpassword and password name "
                   f"that you want to get")
